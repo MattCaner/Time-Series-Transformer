@@ -1,0 +1,11 @@
+auxilary/
+*.xlf
+notes.txt
+__pycache__/
+*.csv
+*.tmx
+*.pydump
+.vscode/
+*.tgz
+*.de
+*.en

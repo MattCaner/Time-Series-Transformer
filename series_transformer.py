@@ -13,7 +13,10 @@ from torch.utils.data import Dataset, DataLoader
 import copy
 from torchtext.data.metrics import bleu_score
 from torchmetrics.text.rouge import ROUGEScore
+from torchmetrics import R2Score
 import pandas as pd
+import matplotlib.pyplot as plt
+from torch.nn.functional import normalize
 
 
 # custom util transformer entity
@@ -315,6 +318,14 @@ class CustomDataSet(Dataset):
         df = df.drop(['Date'],axis=1)
         data = torch.tensor(df.values)
 
+        print(list(df.columns))
+
+        # normalize (is this correct way to normalize this?)
+        for i in range(data.size(1)):
+            data[:,i] = (data[:,i] - torch.min(data[:,i])) / (torch.max(data[:,i]) - torch.min(data[:,i]))
+
+        #data = torch.nn.functional.normalize(data, dim=0)
+
         source_samples = []
         shifted_target = []
         target_samples = []
@@ -341,7 +352,7 @@ class CustomDataSet(Dataset):
         _xe = self.Xe[index]
         _xd = self.Xd[index]
         _y = self.Y[index]
-        return _xe, _xd, _y
+        return _xe.to(torch.float), _xd.to(torch.float), _y.to(torch.float)
 
     def getSets(self, split = 0.8):
         train_size = int(0.8 * len(self))
@@ -357,7 +368,7 @@ class CustomDataSet(Dataset):
 
 
 
-def train_cuda(model: nn.Module, train_dataset: CustomDataSet, device: int, batch_size = 32, lr: float = 0.001, epochs: int = 1, verbose_delay = 100) -> None:
+def train_cuda(model: Transformer, train_dataset: CustomDataSet, device: int, batch_size = 32, lr: float = 0.001, epochs: int = 1, verbose_delay = 100) -> None:
     
     model.cuda(device=device)
     criterion = nn.MSELoss().cuda(device=device)
@@ -366,13 +377,15 @@ def train_cuda(model: nn.Module, train_dataset: CustomDataSet, device: int, batc
     optimizer = torch.optim.Adam(model.parameters(),lr=lr)
     data_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False)
     
+    epoch_loss_history = []
+
     epoch_loss = 0.
     for epoch in range(epochs):
 
         print('Epoch ' + str(epoch)+' of '+str(epochs))
         epoch_loss = 0.
         for i, (xe, xd, y) in enumerate(data_loader):
-            if i%verbose_delay== 0:
+            if verbose_delay > 0 and i%verbose_delay== 0:
                 print(str(i) + " of " + str(len(data_loader)))
 
             last_loss = 0.
@@ -393,12 +406,54 @@ def train_cuda(model: nn.Module, train_dataset: CustomDataSet, device: int, batc
             last_loss = loss.item()
             epoch_loss += float(last_loss)
             del loss
-            del data_out_shifted
             del output
         epoch_loss /= len(data_loader)
+
+        epoch_loss_history.append(epoch_loss)
 
         print("Epoch loss: "+str(epoch_loss))
         
 
 
-    return epoch_loss, lr
+    return epoch_loss, epoch_loss_history
+
+def validate_cuda(model: Transformer, test_dataset: CustomDataSet, device: int, batch_size = 32, verbose_delay = 100):
+    model.cuda(device=device)
+    criterion = nn.MSELoss().cuda(device=device)
+    data_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+
+
+    final_mse = 0.
+    with torch.no_grad:
+        for i, (xe, xd, y) in enumerate(data_loader):
+            final_mse += criterion(model(xe,xd),y)
+    
+    return  final_mse / len(data_loader)
+
+def output_and_show(model: Transformer, input: Tensor, output: Tensor, device: int, visualize_index: int = 0):
+    decoder_input = torch.cat((torch.unsqueeze(input[0],dim=0),output[0:-1]))
+    
+    model.cuda(device=device)
+    predicted_output = model(torch.unsqueeze(input,dim=0).to(device),torch.unsqueeze(decoder_input,dim=0).to(device)).cpu()
+    input_list = input[:,visualize_index].tolist()
+    output_list = output.cpu()[:,visualize_index].tolist()
+    predicted_list = predicted_output[0].detach()[:,visualize_index].tolist()
+    numbers_pre_prediction = list(range(len(input_list)))
+    numbers_post_prediction = list(range(len(input_list),len(input_list)+len(output_list)))
+    print("R^2", R2Score()(torch.tensor(output_list),torch.tensor(predicted_list)), flush = True)
+    plt.plot(numbers_pre_prediction, input_list,'k-')
+    plt.plot(numbers_post_prediction, output_list,'b-')
+    plt.plot(numbers_post_prediction, predicted_list,'r-')
+    plt.show()
+
+
+def long_range_output_and_show(model: Transformer, input: Tensor, output: Tensor, device: int, visualize_index: int = 0):
+    decoder_input = torch.cat((torch.unsqueeze(input[0],dim=0),output[0:-1]))
+    
+    model.cuda(device=device)
+    predicted_output = model(torch.unsqueeze(input,dim=0).to(device),torch.unsqueeze(decoder_input,dim=0).to(device)).cpu()
+    print(output.size())
+    print(predicted_output.size())
+    plt.plot(output.cpu()[:,visualize_index],'b-')
+    plt.plot(predicted_output.detach()[0,:,visualize_index],'r-')
+    plt.show()

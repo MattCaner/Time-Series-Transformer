@@ -307,22 +307,28 @@ class Transformer(nn.Module):
 
 
 class CustomDataSet(Dataset):
-    def __init__(self, infile: str, window_length = 32, prediction_window = 7):
+    def __init__(self, infile: str, window_length = 32, prediction_window = 7, require_date_split = True, drop_idx_column = False):
 
         file = open(infile,'r')
         df = pd.read_csv(file)
-        df[["day", "month", "year"]] = df["Date"].str.split("/", expand = True)
-        df['day'] = df['day'].astype(float)
-        df['month'] = df['month'].astype(float)
-        df['year'] = df['year'].astype(float)
-        df = df.drop(['Date'],axis=1)
+        if require_date_split:
+            df[["day", "month", "year"]] = df["Date"].str.split("/", expand = True)
+            df['day'] = df['day'].astype(float)
+            df['month'] = df['month'].astype(float)
+            df['year'] = df['year'].astype(float)
+            df = df.drop(['Date'],axis=1)
+        if drop_idx_column:
+            df = df.drop(['ID'],axis=1)
         data = torch.tensor(df.values)
 
         print(list(df.columns))
 
         # normalize (is this correct way to normalize this?)
+
         for i in range(data.size(1)):
-            data[:,i] = (data[:,i] - torch.min(data[:,i])) / (torch.max(data[:,i]) - torch.min(data[:,i]))
+            epsilon = torch.zeros_like(data[:,i])
+            epsilon.fill_(1e-4)
+            data[:,i] = (data[:,i] - torch.min(data[:,i])) / torch.max(epsilon,(torch.max(data[:,i]) - torch.min(data[:,i])))
 
         #data = torch.nn.functional.normalize(data, dim=0)
 
